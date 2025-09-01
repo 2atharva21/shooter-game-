@@ -1,4 +1,4 @@
-type Props = { score: number; level: number; lives: number; highScore: number }
+type Props = Readonly<{ score: number; level: number; lives: number; highScore: number }>
 
 export default function UiHud({ score, level, lives, highScore }: Props) {
   return (

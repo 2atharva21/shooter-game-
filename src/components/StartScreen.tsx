@@ -1,6 +1,6 @@
 type Props = {
-  highScore: number
-  onPlay: () => void
+  readonly highScore: number
+  readonly onPlay: () => void
 }
 
 export default function StartScreen({ highScore, onPlay }: Props) {

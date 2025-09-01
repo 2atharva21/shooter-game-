@@ -93,6 +93,10 @@ export default function GameCanvas(props: Readonly<Props>) {
   const { running, session, level, score, onAddScore, onLoseLife, onLevelCleared } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number | null>(null)
+  // virtual resolution and scale
+  const VIRTUAL_W = 480
+  const VIRTUAL_H = 270
+  const scaleRef = useRef(1)
   // sound refs
   const shootPoolRef = useRef<{
     play: () => Promise<void>
@@ -132,26 +136,46 @@ export default function GameCanvas(props: Readonly<Props>) {
   const doubleUntilRef = useRef(0)
   const shieldChargesRef = useRef(0)
 
-  // Resize canvas to container
+  // touch/virtual input helpers
+  const setKey = (k: string, v: boolean) => { keysRef.current[k] = v }
+  const pressLeft = () => setKey('arrowleft', true)
+  const releaseLeft = () => setKey('arrowleft', false)
+  const pressRight = () => setKey('arrowright', true)
+  const releaseRight = () => setKey('arrowright', false)
+  const pressShoot = () => { setKey(' ', true); setKey('space', true) }
+  const releaseShoot = () => { setKey(' ', false); setKey('space', false) }
+
+  // Responsive resize: fit window while preserving aspect, scale draw only
   useEffect(() => {
     const canvas = canvasRef.current!
-    const resize = () => {
-      const parent = canvas.parentElement!
+    const onResize = () => {
       const dpr = window.devicePixelRatio || 1
-      const w = parent.clientWidth
-      const h = parent.clientHeight
-      canvas.width = Math.floor(w * dpr)
-      canvas.height = Math.floor(h * dpr)
-      canvas.style.width = w + 'px'
-      canvas.style.height = h + 'px'
+      const ww = window.innerWidth
+      const wh = window.innerHeight
+      const scale = Math.max(0.5, Math.min(ww / VIRTUAL_W, wh / VIRTUAL_H))
+      scaleRef.current = scale
+      canvas.width = Math.floor(VIRTUAL_W * scale * dpr)
+      canvas.height = Math.floor(VIRTUAL_H * scale * dpr)
+      canvas.style.width = Math.floor(VIRTUAL_W * scale) + 'px'
+      canvas.style.height = Math.floor(VIRTUAL_H * scale) + 'px'
+      // center canvas if parent is larger
+  const parent = canvas.parentElement
+      if (parent) {
+        parent.style.display = 'flex'
+        parent.style.alignItems = 'center'
+        parent.style.justifyContent = 'center'
+      }
       const player = playerRef.current
-      player.pos.x = (canvas.width / dpr) / 2
-      player.pos.y = (canvas.height / dpr) - 40
+      player.pos.x = VIRTUAL_W / 2
+      player.pos.y = VIRTUAL_H - 40
     }
-    resize()
-    const ro = new ResizeObserver(resize)
-    ro.observe(canvas.parentElement!)
-    return () => ro.disconnect()
+    onResize()
+    window.addEventListener('resize', onResize)
+    screen.orientation?.addEventListener?.('change', onResize as any)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      screen.orientation?.removeEventListener?.('change', onResize as any)
+    }
   }, [])
 
   // Shooter upgrade helpers
@@ -320,7 +344,7 @@ export default function GameCanvas(props: Readonly<Props>) {
       else spawnFromSide(type, w, speedScale)
     }
 
-    const step = (now: number) => {
+  const step = (now: number) => {
       const dt = Math.min(1 / 30, (now - last) / 1000)
       last = now
       update(dt)
@@ -329,8 +353,7 @@ export default function GameCanvas(props: Readonly<Props>) {
     }
 
     function spawnBird(now: number) {
-      const dpr = window.devicePixelRatio || 1
-      const w = canvas.width / dpr
+      const w = VIRTUAL_W
       const speedScale = cfg.birdSpeed
       const types = cfg.birdTypes
       const spawnBossOnly = types.length === 1 && types[0] === 'boss'
@@ -625,9 +648,8 @@ export default function GameCanvas(props: Readonly<Props>) {
 
     function update(dt: number) {
       if (!running) { return }
-      const dpr = window.devicePixelRatio || 1
-      const cw = canvas.width / dpr
-      const ch = canvas.height / dpr
+      const cw = VIRTUAL_W
+      const ch = VIRTUAL_H
   applyLaserDamageIfActive()
       handlePlayerAndShooting(dt, cw)
       if (!clearingLevelRef.current) {
@@ -641,10 +663,11 @@ export default function GameCanvas(props: Readonly<Props>) {
 
     function draw(ctx: CanvasRenderingContext2D) {
       const dpr = window.devicePixelRatio || 1
+      const scale = scaleRef.current
       ctx.save()
-      ctx.scale(dpr, dpr)
-      const w = canvas.width / dpr
-      const h = canvas.height / dpr
+      ctx.scale(dpr * scale, dpr * scale)
+      const w = VIRTUAL_W
+      const h = VIRTUAL_H
       // background
       ctx.fillStyle = '#0b1021'
       ctx.fillRect(0, 0, w, h)
@@ -752,7 +775,51 @@ export default function GameCanvas(props: Readonly<Props>) {
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
   }, [running, level])
 
-  return <canvas ref={canvasRef} className="absolute inset-0 block w-full h-full" />
+  return (
+    <div className="relative w-full h-full">
+      <canvas ref={canvasRef} className="block mx-auto" style={{ touchAction: 'none' }} />
+      {/* Mobile controls: show on small screens, hide on md+ */}
+      <div className="md:hidden absolute inset-0 pointer-events-none">
+        <div className="absolute bottom-4 left-4 flex gap-4 pointer-events-auto select-none" style={{ touchAction: 'none' }}>
+          <button
+            aria-label="Left"
+            className="w-16 h-16 rounded-md bg-black/40 border border-white/30 text-white text-sm"
+            onPointerDown={pressLeft}
+            onPointerUp={releaseLeft}
+            onPointerCancel={releaseLeft}
+            onPointerLeave={releaseLeft}
+            onTouchStart={(e) => { e.preventDefault(); pressLeft() }}
+            onTouchEnd={(e) => { e.preventDefault(); releaseLeft() }}
+            onTouchCancel={(e) => { e.preventDefault(); releaseLeft() }}
+          >LEFT</button>
+          <button
+            aria-label="Right"
+            className="w-16 h-16 rounded-md bg-black/40 border border-white/30 text-white text-sm"
+            onPointerDown={pressRight}
+            onPointerUp={releaseRight}
+            onPointerCancel={releaseRight}
+            onPointerLeave={releaseRight}
+            onTouchStart={(e) => { e.preventDefault(); pressRight() }}
+            onTouchEnd={(e) => { e.preventDefault(); releaseRight() }}
+            onTouchCancel={(e) => { e.preventDefault(); releaseRight() }}
+          >RIGHT</button>
+        </div>
+        <div className="absolute bottom-4 right-4 pointer-events-auto select-none" style={{ touchAction: 'none' }}>
+          <button
+            aria-label="Shoot"
+            className="w-16 h-16 rounded-md bg-black/40 border border-white/30 text-white text-sm"
+            onPointerDown={pressShoot}
+            onPointerUp={releaseShoot}
+            onPointerCancel={releaseShoot}
+            onPointerLeave={releaseShoot}
+            onTouchStart={(e) => { e.preventDefault(); pressShoot() }}
+            onTouchEnd={(e) => { e.preventDefault(); releaseShoot() }}
+            onTouchCancel={(e) => { e.preventDefault(); releaseShoot() }}
+          >SHOOT</button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function rectsIntersect(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) {

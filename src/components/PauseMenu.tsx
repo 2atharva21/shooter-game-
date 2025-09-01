@@ -1,6 +1,6 @@
 type Props = {
-  onResume: () => void
-  onQuit: () => void
+  readonly onResume: () => void
+  readonly onQuit: () => void
 }
 
 export default function PauseMenu({ onResume, onQuit }: Props) {

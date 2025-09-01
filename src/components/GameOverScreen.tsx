@@ -1,8 +1,8 @@
 type Props = {
-  score: number
-  highScore: number
-  onRestart: () => void
-  onQuit: () => void
+  readonly score: number
+  readonly highScore: number
+  readonly onRestart: () => void
+  readonly onQuit: () => void
 }
 
 export default function GameOverScreen({ score, highScore, onRestart, onQuit }: Props) {
