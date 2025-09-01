@@ -97,6 +97,10 @@ export default function App() {
     const v = localStorage.getItem('musicOn')
     return v ? v === '1' : true
   })
+  const [sfxOn, setSfxOn] = useState(() => {
+    const v = localStorage.getItem('sfxOn')
+    return v ? v === '1' : true
+  })
 
   // Background music that plays only during gameplay
   const bgRef = useRef<HTMLAudioElement | null>(null)
@@ -118,6 +122,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('musicOn', musicOn ? '1' : '0')
   }, [musicOn])
+  useEffect(() => {
+    localStorage.setItem('sfxOn', sfxOn ? '1' : '0')
+  }, [sfxOn])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -147,6 +154,8 @@ export default function App() {
             onPause={() => dispatch({ type: 'PAUSE' })}
             musicOn={musicOn}
             onToggleMusic={() => setMusicOn(v => !v)}
+            sfxOn={sfxOn}
+            onToggleSfx={() => setSfxOn(v => !v)}
           />
           <UiHud score={state.score} level={state.level} lives={state.lives} highScore={state.highScore} />
           {state.mode === 'paused' && (

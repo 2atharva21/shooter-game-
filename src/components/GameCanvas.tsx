@@ -22,6 +22,8 @@ type Props = {
   onPause?: () => void
   musicOn?: boolean
   onToggleMusic?: () => void
+  sfxOn?: boolean
+  onToggleSfx?: () => void
 }
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -94,6 +96,7 @@ function playExplosionSweep(ref: React.RefObject<AudioContext | null> & { curren
 
 export default function GameCanvas(props: Readonly<Props>) {
   const { running, session, level, score, onAddScore, onLoseLife, onLevelCleared } = props
+  const sfxOn = props.sfxOn ?? true
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number | null>(null)
   // virtual resolution and scale
@@ -295,7 +298,7 @@ export default function GameCanvas(props: Readonly<Props>) {
       const milestones = [5,10,15,20,25,30,35,40,45,50]
       if (milestones.includes(level)) {
         bannerRef.current = { text: 'SHOOTER UPGRADED!', until: performance.now() + 1500 }
-        upgradePoolRef.current?.play()
+  if (sfxOn) upgradePoolRef.current?.play()
       }
     }
 
@@ -319,7 +322,7 @@ export default function GameCanvas(props: Readonly<Props>) {
       const by = -50
       const hp = level === 50 ? 22 : Math.max(6, 4 + Math.floor(level / 5))
       birdsRef.current.push({ pos: { x: bx, y: by }, vel: { x: 0, y: 40 * speedScale }, w: 70, h: 48, t: 0, hp, type: 'boss' })
-      bossPoolRef.current?.play()
+  if (sfxOn) bossPoolRef.current?.play()
     }
 
     function spawnFromTop(type: BirdType, w: number, speedScale: number) {
@@ -434,9 +437,9 @@ export default function GameCanvas(props: Readonly<Props>) {
       }
       for (let i = 0; i < 4; i++) {
         particlesRef.current.push({ pos: { x: px, y: py }, vel: { x: rand(-0.5, 0.5), y: rand(-1.5, -0.5) }, life: 0.25, color: '#ffffff' })
-      }
-      shootPoolRef.current?.play()
-      const nowMs = performance.now()
+  }
+  if (sfxOn) { shootPoolRef.current?.play() }
+  const nowMs = performance.now()
       if (nowMs > nextShootBuzzAtRef.current) { vibrate(5); nextShootBuzzAtRef.current = nowMs + 120 }
       shootCooldownRef.current = cooldownMs
     }
@@ -562,7 +565,7 @@ export default function GameCanvas(props: Readonly<Props>) {
         comboTextRef.current = { x: b.pos.x, y: b.pos.y - 12, until: nowT + 600, text: `COMBO x${comboRef.current.count}!` }
       }
       // play explosion sound
-      explosionPoolRef.current?.play()
+  if (sfxOn) explosionPoolRef.current?.play()
   // haptic on kill
   vibrate([0, 12])
       if (b.type === 'boss') bossAliveRef.current = false
@@ -579,7 +582,7 @@ export default function GameCanvas(props: Readonly<Props>) {
         bulletsRef.current = []
         const bonus = Math.floor(cfg.targetScore * 0.1)
         if (bonus > 0) onAddScore(bonus)
-        levelUpPoolRef.current?.play()
+  if (sfxOn) levelUpPoolRef.current?.play()
   vibrate([0, 25])
         // delay and then notify app
         setTimeout(() => { onLevelCleared() }, 1200)
@@ -631,7 +634,7 @@ export default function GameCanvas(props: Readonly<Props>) {
           if (pu.type === 'rapid') rapidUntilRef.current = Math.max(rapidUntilRef.current, nowT + 10000)
           if (pu.type === 'double') doubleUntilRef.current = Math.max(doubleUntilRef.current, nowT + 15000)
           if (pu.type === 'shield') shieldChargesRef.current += 1
-          powerupPoolRef.current?.play()
+          if (sfxOn) powerupPoolRef.current?.play()
           vibrate(16)
           return false
         }
@@ -843,6 +846,12 @@ export default function GameCanvas(props: Readonly<Props>) {
             style={{ borderColor: '#39ff14', color: '#39ff14', background: 'rgba(0,0,0,0.25)' }}
             onClick={() => props.onToggleMusic?.()}
           >{props.musicOn ? 'MUSIC: ON' : 'MUSIC: OFF'}</button>
+          <button
+            aria-label="SFX"
+            className="text-[10px] rounded border px-2 py-1"
+            style={{ borderColor: '#39ff14', color: '#39ff14', background: 'rgba(0,0,0,0.25)' }}
+            onClick={() => props.onToggleSfx?.()}
+          >{sfxOn ? 'SFX: ON' : 'SFX: OFF'}</button>
         </div>
         {/* Joystick area */}
         <div
