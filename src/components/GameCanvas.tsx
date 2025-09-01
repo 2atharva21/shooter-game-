@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { levelConfig } from '../game/levels.ts'
 
 type Vec = { x: number; y: number }
@@ -19,6 +19,9 @@ type Props = {
   onAddScore: (amount: number) => void
   onLoseLife: () => void
   onLevelCleared: () => void
+  onPause?: () => void
+  musicOn?: boolean
+  onToggleMusic?: () => void
 }
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -98,14 +101,8 @@ export default function GameCanvas(props: Readonly<Props>) {
   const VIRTUAL_H = 270
   const scaleRef = useRef(1)
   // sound refs
-  const shootPoolRef = useRef<{
-    play: () => Promise<void>
-    dispose: () => void
-  } | null>(null)
-  const explosionPoolRef = useRef<{
-    play: () => Promise<void>
-    dispose: () => void
-  } | null>(null)
+  const shootPoolRef = useRef<{ play: () => Promise<void>; dispose: () => void } | null>(null)
+  const explosionPoolRef = useRef<{ play: () => Promise<void>; dispose: () => void } | null>(null)
   const levelUpPoolRef = useRef<{ play: () => Promise<void>; dispose: () => void } | null>(null)
   const bossPoolRef = useRef<{ play: () => Promise<void>; dispose: () => void } | null>(null)
   const powerupPoolRef = useRef<{ play: () => Promise<void>; dispose: () => void } | null>(null)
@@ -138,12 +135,19 @@ export default function GameCanvas(props: Readonly<Props>) {
 
   // touch/virtual input helpers
   const setKey = (k: string, v: boolean) => { keysRef.current[k] = v }
-  const pressLeft = () => setKey('arrowleft', true)
-  const releaseLeft = () => setKey('arrowleft', false)
-  const pressRight = () => setKey('arrowright', true)
-  const releaseRight = () => setKey('arrowright', false)
   const pressShoot = () => { setKey(' ', true); setKey('space', true) }
   const releaseShoot = () => { setKey(' ', false); setKey('space', false) }
+  const axisRef = useRef(0) // -1..1 for joystick/swipe
+  const swipeActiveRef = useRef(false)
+  const swipeStartXRef = useRef(0)
+  const [oneHand, setOneHand] = useState(false)
+  // vibration helpers
+  const nextShootBuzzAtRef = useRef(0)
+  const vibrate = (pat: number | number[]) => {
+    try {
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) (navigator as any).vibrate(pat)
+    } catch { /* ignore */ }
+  }
 
   // Responsive resize: fit window while preserving aspect, scale draw only
   useEffect(() => {
@@ -159,7 +163,7 @@ export default function GameCanvas(props: Readonly<Props>) {
       canvas.style.width = Math.floor(VIRTUAL_W * scale) + 'px'
       canvas.style.height = Math.floor(VIRTUAL_H * scale) + 'px'
       // center canvas if parent is larger
-  const parent = canvas.parentElement
+      const parent = canvas.parentElement
       if (parent) {
         parent.style.display = 'flex'
         parent.style.alignItems = 'center'
@@ -218,7 +222,7 @@ export default function GameCanvas(props: Readonly<Props>) {
     birdsRef.current = []
     powerUpsRef.current = []
     particlesRef.current = []
-  const canvas = canvasRef.current
+    const canvas = canvasRef.current
     if (canvas) {
       const dpr = window.devicePixelRatio || 1
       const w = canvas.width / dpr
@@ -237,9 +241,9 @@ export default function GameCanvas(props: Readonly<Props>) {
     levelProgressRef.current = 0
     clearingLevelRef.current = false
     bossAliveRef.current = false
-  bannerRef.current = null
-  laserUntilRef.current = 0
-  laserNextAtRef.current = 0
+    bannerRef.current = null
+    laserUntilRef.current = 0
+    laserNextAtRef.current = 0
   }, [session])
 
   // Initialize audio pools once
@@ -405,43 +409,57 @@ export default function GameCanvas(props: Readonly<Props>) {
       }
     }
 
+    function computeAxis(keys: Record<string, boolean>) {
+      let axis = axisRef.current
+      if (keys['arrowleft'] || keys['a']) axis -= 1
+      if (keys['arrowright'] || keys['d']) axis += 1
+      return clamp(axis, -1, 1)
+    }
+
+    function updateLaserCadence(now: number) {
+      if (level >= 30 && now >= laserNextAtRef.current && laserUntilRef.current < now) {
+        laserUntilRef.current = now + (level >= 50 ? 6000 : 3000)
+        laserNextAtRef.current = now + 30000
+      }
+    }
+
+    function tryShoot(p: typeof playerRef.current, up: ReturnType<typeof getUpgrade>, now: number, cooldownMs: number) {
+      const keys = keysRef.current
+      if (shootCooldownRef.current > 0 || !(keys[' '] || keys['space'])) return
+      const px = p.pos.x, py = p.pos.y - p.h / 2
+      fireBullets(px, py, up)
+      if (now < doubleUntilRef.current && up.pattern === 'single') {
+        bulletsRef.current.push({ pos: { x: px - 10, y: py }, vel: { x: 0, y: -up.bullet.speed }, w: up.bullet.w, h: up.bullet.h, pierce: up.bullet.pierce, kind: up.bullet.kind })
+        bulletsRef.current.push({ pos: { x: px + 10, y: py }, vel: { x: 0, y: -up.bullet.speed }, w: up.bullet.w, h: up.bullet.h, pierce: up.bullet.pierce, kind: up.bullet.kind })
+      }
+      for (let i = 0; i < 4; i++) {
+        particlesRef.current.push({ pos: { x: px, y: py }, vel: { x: rand(-0.5, 0.5), y: rand(-1.5, -0.5) }, life: 0.25, color: '#ffffff' })
+      }
+      shootPoolRef.current?.play()
+      const nowMs = performance.now()
+      if (nowMs > nextShootBuzzAtRef.current) { vibrate(5); nextShootBuzzAtRef.current = nowMs + 120 }
+      shootCooldownRef.current = cooldownMs
+    }
+
     function handlePlayerAndShooting(dt: number, cw: number) {
       const p = playerRef.current
       const keys = keysRef.current
-      // target ~4-5 px/frame top speed
       const acc = 0.45
       const friction = 0.9
-      if (keys['arrowleft'] || keys['a']) p.vel.x -= acc
-      if (keys['arrowright'] || keys['d']) p.vel.x += acc
+      const axis = computeAxis(keys)
+      if (axis !== 0) { p.vel.x += acc * axis * 1.2 }
       p.vel.x *= friction
       p.pos.x += p.vel.x
       p.pos.x = clamp(p.pos.x, p.w / 2, cw - p.w / 2)
 
       const now = performance.now()
       const up = getUpgrade(level)
-      // periodic laser from level 30
-      if (level >= 30 && now >= laserNextAtRef.current && laserUntilRef.current < now) {
-        laserUntilRef.current = now + (level >= 50 ? 6000 : 3000)
-        laserNextAtRef.current = now + 30000
-      }
+      updateLaserCadence(now)
       const rapidActive = now < rapidUntilRef.current || up.pattern === 'rapid'
       const baseCooldown = up.cooldown
       const cooldownMs = rapidActive ? Math.max(40, baseCooldown * 0.5) : baseCooldown
       shootCooldownRef.current -= dt * 1000
-      if (shootCooldownRef.current <= 0 && (keys[' '] || keys['space'])) {
-        const px = p.pos.x, py = p.pos.y - p.h / 2
-        fireBullets(px, py, up)
-        if (now < doubleUntilRef.current && up.pattern === 'single') {
-          bulletsRef.current.push({ pos: { x: px - 10, y: py }, vel: { x: 0, y: -up.bullet.speed }, w: up.bullet.w, h: up.bullet.h, pierce: up.bullet.pierce, kind: up.bullet.kind })
-          bulletsRef.current.push({ pos: { x: px + 10, y: py }, vel: { x: 0, y: -up.bullet.speed }, w: up.bullet.w, h: up.bullet.h, pierce: up.bullet.pierce, kind: up.bullet.kind })
-        }
-        for (let i = 0; i < 4; i++) {
-          particlesRef.current.push({ pos: { x: px, y: py }, vel: { x: rand(-0.5, 0.5), y: rand(-1.5, -0.5) }, life: 0.25, color: '#ffffff' })
-        }
-        // play shooting sound (only during gameplay)
-        shootPoolRef.current?.play()
-        shootCooldownRef.current = cooldownMs
-      }
+      tryShoot(p, up, now, cooldownMs)
     }
 
     function handleSpawningAndBirdMotion(dt: number, cw: number, ch: number) {
@@ -545,6 +563,8 @@ export default function GameCanvas(props: Readonly<Props>) {
       }
       // play explosion sound
       explosionPoolRef.current?.play()
+  // haptic on kill
+  vibrate([0, 12])
       if (b.type === 'boss') bossAliveRef.current = false
       if (Math.random() < cfg.powerUpRate) {
         const types: PowerUpType[] = ['double', 'rapid', 'shield']
@@ -560,6 +580,7 @@ export default function GameCanvas(props: Readonly<Props>) {
         const bonus = Math.floor(cfg.targetScore * 0.1)
         if (bonus > 0) onAddScore(bonus)
         levelUpPoolRef.current?.play()
+  vibrate([0, 25])
         // delay and then notify app
         setTimeout(() => { onLevelCleared() }, 1200)
       }
@@ -611,6 +632,7 @@ export default function GameCanvas(props: Readonly<Props>) {
           if (pu.type === 'double') doubleUntilRef.current = Math.max(doubleUntilRef.current, nowT + 15000)
           if (pu.type === 'shield') shieldChargesRef.current += 1
           powerupPoolRef.current?.play()
+          vibrate(16)
           return false
         }
         return pu.pos.y < ch + 20
@@ -775,47 +797,89 @@ export default function GameCanvas(props: Readonly<Props>) {
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
   }, [running, level])
 
+  // One-hand toggle helper used by button
+  const toggleOneHand = () => { setOneHand(v => !v) }
+
+  // Swipe helpers
+  const eventClientX = (e: any) => (e?.clientX ?? e?.touches?.[0]?.clientX ?? 0) as number
+  const handleSwipeStart = (e: React.PointerEvent | React.TouchEvent) => {
+    const x = eventClientX(e)
+    swipeActiveRef.current = true; swipeStartXRef.current = x
+  }
+  const handleSwipeMove = (e: React.PointerEvent | React.TouchEvent) => {
+    if (!swipeActiveRef.current) return
+    const x = eventClientX(e) || swipeStartXRef.current
+    const dx = x - swipeStartXRef.current
+    axisRef.current = clamp(dx / 60, -1, 1)
+  }
+  const handleSwipeEnd = () => { swipeActiveRef.current = false; axisRef.current = 0 }
+
   return (
-    <div className="relative w-full h-full">
+    <div
+      className="relative w-full h-full select-none"
+      onPointerDown={(e) => {
+        // tap-to-shoot if above HUD (top ~56px) and not pressing buttons
+        if ((e.target as HTMLElement).tagName === 'CANVAS') { if (e.clientY > 56) { pressShoot() } }
+        handleSwipeStart(e)
+      }}
+      onPointerMove={handleSwipeMove}
+      onPointerUp={() => { releaseShoot(); handleSwipeEnd() }}
+      onPointerCancel={() => { releaseShoot(); handleSwipeEnd() }}
+    >
       <canvas ref={canvasRef} className="block mx-auto" style={{ touchAction: 'none' }} />
       {/* Mobile controls: show on small screens, hide on md+ */}
       <div className="md:hidden absolute inset-0 pointer-events-none">
-        <div className="absolute bottom-4 left-4 flex gap-4 pointer-events-auto select-none" style={{ touchAction: 'none' }}>
+        {/* Quick pause & music in top-right */}
+        <div className="absolute top-3 right-3 flex gap-2 pointer-events-auto">
           <button
-            aria-label="Left"
-            className="w-16 h-16 rounded-md bg-black/40 border border-white/30 text-white text-sm"
-            onPointerDown={pressLeft}
-            onPointerUp={releaseLeft}
-            onPointerCancel={releaseLeft}
-            onPointerLeave={releaseLeft}
-            onTouchStart={(e) => { e.preventDefault(); pressLeft() }}
-            onTouchEnd={(e) => { e.preventDefault(); releaseLeft() }}
-            onTouchCancel={(e) => { e.preventDefault(); releaseLeft() }}
-          >LEFT</button>
+            aria-label="Pause"
+            className="text-[10px] rounded border px-2 py-1"
+            style={{ borderColor: '#39ff14', color: '#39ff14', background: 'rgba(0,0,0,0.25)' }}
+            onClick={() => props.onPause?.()}
+          >PAUSE</button>
           <button
-            aria-label="Right"
-            className="w-16 h-16 rounded-md bg-black/40 border border-white/30 text-white text-sm"
-            onPointerDown={pressRight}
-            onPointerUp={releaseRight}
-            onPointerCancel={releaseRight}
-            onPointerLeave={releaseRight}
-            onTouchStart={(e) => { e.preventDefault(); pressRight() }}
-            onTouchEnd={(e) => { e.preventDefault(); releaseRight() }}
-            onTouchCancel={(e) => { e.preventDefault(); releaseRight() }}
-          >RIGHT</button>
+            aria-label="Music"
+            className="text-[10px] rounded border px-2 py-1"
+            style={{ borderColor: '#39ff14', color: '#39ff14', background: 'rgba(0,0,0,0.25)' }}
+            onClick={() => props.onToggleMusic?.()}
+          >{props.musicOn ? 'MUSIC: ON' : 'MUSIC: OFF'}</button>
         </div>
-        <div className="absolute bottom-4 right-4 pointer-events-auto select-none" style={{ touchAction: 'none' }}>
+        {/* Joystick area */}
+        <div
+          className={`absolute bottom-4 left-4 pointer-events-auto`}
+          style={{ width: 120, height: 120 }}
+          onPointerDown={(e) => {
+            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+            const cx = rect.left + rect.width / 2
+            const dx = e.clientX - cx
+            axisRef.current = clamp(dx / (rect.width / 2), -1, 1)
+          }}
+          onPointerMove={(e) => {
+            if (e.buttons === 0) return
+            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+            const cx = rect.left + rect.width / 2
+            const dx = e.clientX - cx
+            axisRef.current = clamp(dx / (rect.width / 2), -1, 1)
+          }}
+          onPointerUp={() => { axisRef.current = 0 }}
+        >
+          <div className="w-full h-full rounded-full border" style={{ borderColor: '#39ff14', borderWidth: 2, background: 'rgba(0,0,0,0.15)' }} />
+        </div>
+        {/* Shoot button */}
+        <div className={`absolute ${oneHand ? 'bottom-4 left-40' : 'bottom-4 right-4'} pointer-events-auto`}>
           <button
             aria-label="Shoot"
-            className="w-16 h-16 rounded-md bg-black/40 border border-white/30 text-white text-sm"
+            className="rounded-full text-white"
+            style={{ width: 72, height: 72, border: '2px solid #39ff14', background: 'rgba(0,0,0,0.15)' }}
             onPointerDown={pressShoot}
             onPointerUp={releaseShoot}
             onPointerCancel={releaseShoot}
             onPointerLeave={releaseShoot}
-            onTouchStart={(e) => { e.preventDefault(); pressShoot() }}
-            onTouchEnd={(e) => { e.preventDefault(); releaseShoot() }}
-            onTouchCancel={(e) => { e.preventDefault(); releaseShoot() }}
           >SHOOT</button>
+        </div>
+        {/* One-hand toggle */}
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-auto">
+          <button className="text-[10px] rounded border px-2 py-1" style={{ borderColor: '#39ff14', color: '#39ff14', background: 'rgba(0,0,0,0.2)' }} onClick={toggleOneHand}>HAND</button>
         </div>
       </div>
     </div>

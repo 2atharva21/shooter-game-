@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import GameCanvas from './components/GameCanvas.tsx'
 import UiHud from './components/UiHud.tsx'
 import StartScreen from './components/StartScreen.tsx'
@@ -93,6 +93,10 @@ export default function App() {
   level: 1,
   lives: 100,
   }))
+  const [musicOn, setMusicOn] = useState(() => {
+    const v = localStorage.getItem('musicOn')
+    return v ? v === '1' : true
+  })
 
   // Background music that plays only during gameplay
   const bgRef = useRef<HTMLAudioElement | null>(null)
@@ -104,12 +108,16 @@ export default function App() {
       bgRef.current = a
     }
     const a = bgRef.current
-    if (state.mode === 'playing') {
+    if (state.mode === 'playing' && musicOn) {
       a?.play().catch(() => {})
     } else {
       try { a?.pause() } catch { /* ignore */ }
     }
-  }, [state.mode])
+  }, [state.mode, musicOn])
+
+  useEffect(() => {
+    localStorage.setItem('musicOn', musicOn ? '1' : '0')
+  }, [musicOn])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -136,6 +144,9 @@ export default function App() {
             onAddScore={(amount: number) => dispatch({ type: 'ADD_SCORE', amount })}
             onLoseLife={() => dispatch({ type: 'LOSE_LIFE' })}
             onLevelCleared={() => dispatch({ type: 'LEVEL_CLEARED' })}
+            onPause={() => dispatch({ type: 'PAUSE' })}
+            musicOn={musicOn}
+            onToggleMusic={() => setMusicOn(v => !v)}
           />
           <UiHud score={state.score} level={state.level} lives={state.lives} highScore={state.highScore} />
           {state.mode === 'paused' && (
